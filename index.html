@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>SW</title>
+</head>
+<body>
+
+<h2>SW test 15</h2>
+
+<!--<img src="./landscape.jpg" alt="Landscape" height="200">-->
+<img src="./portrait.jpg" alt="Portrait" height="200">
+
+<script>
+    function getActiveServiceWorker(registration) {
+      return new Promise(resolve => {
+        const resolveIfActive = () => {
+          if (registration.active) {
+            resolve(registration.active);
+          } else {
+            requestAnimationFrame(resolveIfActive);
+          }
+        };
+
+        resolveIfActive();
+      });
+    }
+
+    navigator.storage.persist().then(granted => {
+      console.log('Persistent storage granted: ', granted);
+
+      navigator.serviceWorker.register('./sw.js')
+        .then(getActiveServiceWorker)
+        .then(sw => {
+          setTimeout(() => {
+            sw.postMessage({
+              type: 'CACHE',
+              assetUrlsToCache: [
+                '/service-worker/',
+                '/service-worker/portrait.jpg',
+                '/service-worker/landscape.jpg',
+              ],
+              cacheVersion: 'leona',
+            })
+          }, 2000);
+        });
+    });
+</script>
+
+</body>
+</html>
