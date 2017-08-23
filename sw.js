@@ -1,205 +1,239 @@
-let cacheVersion = 0;
-let cacheKeyPrefix = 'app-cache-v';
-let cacheKey = '';
-let resolveCacheSetup = () => {};
-let cacheSetupDone = new Promise(resolve => {
-  resolveCacheSetup = () => {
-    // console.log('CACHE SETUP DONE');
-    resolve();
-  };
-});
+const cacheKeys = {
+    app: 'AppCache',
+    fetch: 'FetchCache',
+};
 
-cacheSetupDone.then(() => {
-  console.log('Cache setup done, allowing fetches to pass.');
-});
-
-console.log('IM IN');
-
-function addToCache (cacheKey, request, response) {
-  if (!response.ok) {
-    return response;
-  }
-
-  const responseClone = response.clone();
-  caches.open(cacheKey).then(cache => {
-    cache.put(request, responseClone);
-  });
-
-  return response;
-}
-
-function fetchFromCache (event) {
-  return caches.match(event.request).then(response => {
-    if (!response) {
-      // A synchronous error that will kick off the catch handler
-      throw Error('"' + event.request.url + '" not found in cache');
-    }
-    return response;
-  });
-}
-
-function deletePreviousCaches () {
-  return caches.keys().then(cacheKeys => {
-    function isAppCache (cacheKey) {
-      return cacheKey.indexOf(cacheKeyPrefix) === 0;
+function addToCache(cacheKey, request, response) {
+    if (!response.ok) {
+        return response;
     }
 
-    const previousAppCacheKeys = cacheKeys.filter(isAppCache);
+    const responseClone = response.clone();
 
-    const deletePromises = previousAppCacheKeys.map(caches.delete);
+    return caches.match(request).then(matchedResponse => {
+        // Serve back the response if it was stored already
+        if (matchedResponse) {
+            return matchedResponse;
+        }
 
-    return Promise.all(deletePromises);
-  });
-}
-
-function handleCacheUpdate(message) {
-  console.log('Handling CACHE message', message);
-
-  cacheVersion = message.cacheVersion;
-  localCacheKey = cacheKeyPrefix + cacheVersion;
-
-  return caches.has(localCacheKey).then(cached => {
-    if (cached) {
-      console.log('Cache "' + localCacheKey + '" already stored.');
-      // Already cached, nothing to do here
-      return;
-    }
-
-    return deletePreviousCaches().then(() => {
-      caches
-        .open(localCacheKey)
-        .then(function(cache) {
-          return cache.addAll(message.assetUrlsToCache);
-        })
-        .then(() => {
-          console.log('New cache "' + localCacheKey + '" stored.');
-        });
+        return caches
+            .open(cacheKey)
+            .then(cache => cache.put(request, responseClone))
+            .catch(e => {
+                console.log(request.url, 'Cache put failed: ', String(e));
+            })
+            .then(() => response);
     });
-  }).then(() => setTimeout(() => {
-    cacheKey = localCacheKey;
-  }, 2000));
+}
 
+function fetchFromCache(request) {
+    return caches.match(request).then(response => {
+        if (!response) {
+            // A synchronous error that will kick off the catch handler
+            throw Error('"' + request.url + '" not found in cache');
+        }
+
+        return response;
+    });
+}
+
+/**
+ * Resolves with true if deletion was successful, or if the cache didn't exist
+ * to begin with and false otherwise.
+ *
+ * @param {string} cacheKey
+ * @return {Promise.<boolean>}
+ */
+function deleteCache(cacheKey) {
+    return caches.has(cacheKey).then(hasCache => {
+        if (!hasCache) {
+            return true;
+        }
+
+        return caches.delete(cacheKey);
+    });
+}
+
+function clearAllCache() {
+    const deletionPromises = Object.values(cacheKeys).map(deleteCache);
+
+    return Promise.all(deletionPromises);
+}
+
+function handleStoreInAppCacheEvent(event) {
+    const message = event.data;
+
+    return caches.has(cacheKeys.app).then(hasCache => {
+        if (hasCache) {
+            return 'Caching was already done previously.';
+        }
+
+        return caches
+            .open(cacheKeys.app)
+            .then(cache => cache.addAll(message.assetUrlsToCache));
+    });
+}
+
+function respondToEvent(event, response) {
+    response = typeof response !== 'undefined' ? response : true;
+
+    if (!Array.isArray(event.ports)) {
+        return;
+    }
+
+    event.ports.forEach(port => port.postMessage(response));
+}
+
+function respondToEventWithPromise(event, promise) {
+    return promise
+        .then(response => respondToEvent(event, response))
+        .catch(e => respondToEvent(event, { error: String(e) }));
+}
+
+function handleHasAppCacheEvent() {
+    return caches.has(cacheKeys.app);
 }
 
 self.addEventListener('message', event => {
-  const message= event.data;
+    const message = event.data;
 
-  if (message.type === 'CACHE') {
-    handleCacheUpdate(message).then(() => {
-      console.log('Handle cache update done');
-      resolveCacheSetup();
-    });
-  }
+    if (message.type === 'StoreInAppCache') {
+        respondToEventWithPromise(event, handleStoreInAppCacheEvent(event));
+    } else if (message.type === 'HasAppCache') {
+        respondToEventWithPromise(event, handleHasAppCacheEvent(event));
+    } else if (message.type === 'TheQuestion') {
+        respondToEvent(event, 42);
+    } else if (message.type === 'ClearAllCache') {
+        respondToEventWithPromise(event, clearAllCache());
+    }
 });
 
-function shouldHandleFetch (event) {
-  const request            = event.request;
-  const url                = new URL(request.url);
-  const criteria           = {
-    isGETRequest      : request.method === 'GET',
-    isFromMyOrigin    : url.origin === self.location.origin
-  };
+function shouldHandleFetch(event) {
+    const request = event.request;
+    const url = new URL(request.url);
+    const criteria = {
+        isGETRequest: request.method === 'GET',
+        // isFromMyOrigin: url.origin === self.location.origin,
+    };
 
-  // Create a new array with just the keys from criteria that have
-  // failing (i.e. false) values.
-  const failingCriteria = Object.keys(criteria).filter(criteriaKey => !criteria[criteriaKey]);
+    // Create a new array with just the keys from criteria that have
+    // failing (i.e. false) values.
+    const failingCriteria = Object.keys(criteria).filter(
+        criteriaKey => !criteria[criteriaKey]
+    );
 
-  // If that failing array has any length, one or more tests failed.
-  return !failingCriteria.length;
+    // If that failing array has any length, one or more tests failed.
+    return !failingCriteria.length;
 }
 
 self.addEventListener('fetch', function(event) {
-  if (!shouldHandleFetch(event)) {
-    console.log('fetch ignored', event);
-    return;
-  }
+    if (!shouldHandleFetch(event)) {
+        console.log(
+            'Letting the following request to be handled by browser:',
+            event
+        );
+        return;
+    }
 
-  if (!cacheKey) {
-    console.log('Cache key is not ready, ignoring fetch.', event);
-    return;
-  } else {
-    console.log('Cache Key available: ', cacheKey);
-  }
+    const request = event.request;
+    const acceptHeader = request.headers.get('Accept');
+    let resourceType = 'static';
 
-  console.log('Fetch event caught', event);
-
-  const request      = event.request;
-  const acceptHeader = request.headers.get('Accept');
-  let resourceType = 'static';
-
-  if (acceptHeader.indexOf('text/html') !== -1) {
-    resourceType = 'content';
-  } else if (acceptHeader.indexOf('image') !== -1) {
-    resourceType = 'image';
-  }
-
-  // 1. Determine what kind of asset this is… (above).
-  if (resourceType === 'content') {
-    // Use a network-first strategy.
-    console.log('Network-first strategy for "' + request.url  + '"');
-    event.respondWith(
-      cacheSetupDone
-        .then(() => console.log('fetch call passed for "' + request.url  + '"'))
-        .then(() => {
-          if (!navigator.onLine) {
-            throw new Error('Offline, Cannot fetch "' + request.url + '".');
-          }
-
-          return fetch(request);
-        })
-        .then(response => addToCache(cacheKey, request, response))
-        .catch(() => fetchFromCache(event))
-        .catch(e => {
-          console.error('Unexpected error', resourceType, e);
-        })
-    );
-  } else {
+    if (acceptHeader.indexOf('text/html') !== -1) {
+        resourceType = 'content';
+    } else if (acceptHeader.indexOf('image') !== -1) {
+        resourceType = 'image';
+    }
     // Use a cache-first strategy.
-    console.log('Cache-first strategy for "' + request.url  + '"');
+    console.log(request.url, 'Fetch intercepted.');
     event.respondWith(
-      cacheSetupDone
-        .then(() => console.log('fetch call passed for for "' + request.url  + '"'))
-        .then(() => fetchFromCache(event))
-        .catch(() => {
-          if (!navigator.onLine) {
-            throw new Error('Offline, Cannot fetch "' + request.url + '".');
-          }
+        fetchFromCache(request)
+            .then(response => {
+                console.log(
+                    request.url,
+                    'Cache HIT, serving request from cache.'
+                );
 
-          return fetch(request);
-        })
-        .then(response => addToCache(cacheKey, request, response))
-        .catch(e => {
-          console.error('Unexpected error', resourceType, e);
-        })
+                return response;
+            })
+            .catch(() => {
+                console.log(
+                    request.url,
+                    'Cache MISS, fetching request from network.'
+                );
+
+                // Couldn't find in cache, see if we could grab it through the network
+                if (!navigator.onLine) {
+                    throw new Error(
+                        request.url + ' Offline, cannot run fetch.'
+                    );
+                }
+
+                return fetch(request);
+            })
+            .then(response => addToCache(cacheKeys.fetch, request, response))
+            .then(response => {
+                console.log(request.url, 'Request added to cache.');
+
+                return response;
+            })
+            .catch(e => {
+                console.error(
+                    request.url,
+                    'Resource could not be retrieved neither from cache nor through the network.',
+                    resourceType,
+                    e
+                );
+            })
     );
-  }
+
+    // More sophisticated caching strategies:
+    // // 1. Determine what kind of asset this is… (above).
+    // if (resourceType === 'content') {
+    //   // Use a network-first strategy.
+    //   console.log('Network-first strategy for "' + request.url  + '"');
+    //   event.respondWith(
+    //     Promise.resolve()
+    //       .then(() => {
+    //         if (!navigator.onLine) {
+    //           throw new Error('Offline, Cannot fetch "' + request.url + '".');
+    //         }
+    //
+    //         return fetch(request);
+    //       })
+    //       .then(response => addToCache(cacheKeys.fetch, request, response))
+    //       .catch(() => fetchFromCache(request))
+    //       .catch(e => {
+    //         console.error('Unexpected error', resourceType, e);
+    //       })
+    //   );
+    // } else {
+    //   // Use a cache-first strategy.
+    //   console.log('Cache-first strategy for "' + request.url  + '"');
+    //   event.respondWith(
+    //     fetchFromCache(request)
+    //       .catch(() => {
+    //         if (!navigator.onLine) {
+    //           throw new Error('Offline, Cannot fetch "' + request.url + '".');
+    //         }
+    //
+    //         return fetch(request);
+    //       })
+    //       .then(response => addToCache(cacheKeys.fetch, request, response))
+    //       .catch(e => {
+    //         console.error('Unexpected error', resourceType, e);
+    //       })
+    //   );
+    // }
 });
 
-
 self.addEventListener('install', function(event) {
-  console.log('install');
-  // Perform install steps
-  event.waitUntil(
-    new Promise(resolve => {
-      setTimeout(() => {
-        console.log('INSTALLED');
-        resolve();
-      }, 3000);
-    })
-    // caches.open(CACHE_NAME)
-    //   .then(function(cache) {
-    //     return cache.addAll(urlsToCache);
-    //   })
-  );
+    // Skip the 'waiting' lifecycle phase, to go directly from 'installed' to 'activated', even if
+    // there are still previous incarnations of this service worker registration active.
+    event.waitUntil(self.skipWaiting());
 });
 
 self.addEventListener('activate', function(event) {
-  console.log('activate');
-  // // Perform install steps
-  // event.waitUntil(
-  //   caches.open(CACHE_NAME)
-  //     .then(function(cache) {
-  //       return cache.addAll(urlsToCache);
-  //     })
-  // );
+    // Claim any clients immediately, so that the page will be under SW control without reloading.
+    event.waitUntil(self.clients.claim());
 });

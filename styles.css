@@ -1,0 +1,8 @@
+.Message {
+    position: fixed;
+    right: 0;
+    top: 0;
+    padding: 10px 20px;
+    transition: opacity .3s;
+    background: #ddd;
+}

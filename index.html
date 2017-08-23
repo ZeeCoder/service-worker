@@ -2,50 +2,35 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>SW</title>
+    <title>Caching Service Worker</title>
+
+    <link rel="stylesheet" href="./styles.css">
 </head>
 <body>
 
-<h2>SW test 15</h2>
+<div class="Message" id="Message"></div>
 
-<!--<img src="./landscape.jpg" alt="Landscape" height="200">-->
-<img src="./portrait.jpg" alt="Portrait" height="200">
+<h2>Caching Service Worker</h2>
 
-<script>
-    function getActiveServiceWorker(registration) {
-      return new Promise(resolve => {
-        const resolveIfActive = () => {
-          if (registration.active) {
-            resolve(registration.active);
-          } else {
-            requestAnimationFrame(resolveIfActive);
-          }
-        };
+<!--<img src="./landscape.jpg" alt="Landscape">-->
+<img src="./portrait.jpg" alt="Portrait">
 
-        resolveIfActive();
-      });
-    }
+<br>
 
-    navigator.storage.persist().then(granted => {
-      console.log('Persistent storage granted: ', granted);
+<div>
+    <p>The following image should be added to the FetchCache</p>
+    <img src="http://hdwallpaperssys.com/wp-content/uploads/2015/05/Beautiful-road-landscape-image.jpg" height="100">
+</div>
 
-      navigator.serviceWorker.register('./sw.js')
-        .then(getActiveServiceWorker)
-        .then(sw => {
-          setTimeout(() => {
-            sw.postMessage({
-              type: 'CACHE',
-              assetUrlsToCache: [
-                '/service-worker/',
-                '/service-worker/portrait.jpg',
-                '/service-worker/landscape.jpg',
-              ],
-              cacheVersion: 'leona',
-            })
-          }, 2000);
-        });
-    });
-</script>
+<br>
+<br>
+
+<button onclick="clearAllCache();">Clear All Cache</button>
+<button onclick="hasAppCache();">Has App Cache</button>
+<button onclick="storeAppCache();">Store App Cache</button>
+
+<script src="http://code.jquery.com/jquery-3.2.1.min.js"></script>
+<script src="./client.js"></script>
 
 </body>
 </html>
