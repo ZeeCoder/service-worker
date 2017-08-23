@@ -4,7 +4,8 @@ const cacheKeys = {
 };
 
 function addToCache(cacheKey, request, response) {
-    if (!response.ok) {
+    // Allow 'opaque' requests to be stored with a non-ok status.
+    if (response.type === 'basic' && !response.ok) {
         return response;
     }
 
@@ -108,6 +109,10 @@ self.addEventListener('message', event => {
     }
 });
 
+function isFromMyOrigin(request) {
+    return new URL(request.url).origin === self.location.origin;
+}
+
 function shouldHandleFetch(event) {
     const request = event.request;
     const url = new URL(request.url);
@@ -138,14 +143,15 @@ self.addEventListener('fetch', function(event) {
     const request = event.request;
     const acceptHeader = request.headers.get('Accept');
     let resourceType = 'static';
-
     if (acceptHeader.indexOf('text/html') !== -1) {
         resourceType = 'content';
     } else if (acceptHeader.indexOf('image') !== -1) {
         resourceType = 'image';
     }
-    // Use a cache-first strategy.
+
     console.log(request.url, 'Fetch intercepted.');
+
+    // Use a cache-first strategy.
     event.respondWith(
         fetchFromCache(request)
             .then(response => {
@@ -157,9 +163,12 @@ self.addEventListener('fetch', function(event) {
                 return response;
             })
             .catch(() => {
+                const isMyOrigin = isFromMyOrigin(request);
+
                 console.log(
                     request.url,
-                    'Cache MISS, fetching request from network.'
+                    'Cache MISS, fetching request from network.',
+                    'isMyOrigin: ',isMyOrigin
                 );
 
                 // Couldn't find in cache, see if we could grab it through the network
@@ -169,7 +178,17 @@ self.addEventListener('fetch', function(event) {
                     );
                 }
 
-                return fetch(request);
+                const fetchOpts = {};
+
+                if (!isMyOrigin) {
+                    // We can cache cross-origin resources, but only with no-cors
+                    // enabled.
+                    // @see https://stackoverflow.com/questions/35626269/how-to-use-service-worker-to-cache-cross-domain-resources-if-the-response-is-404
+                    // @see https://jakearchibald.com/2015/thats-so-fetch/#no-cors-and-opaque-responses
+                    fetchOpts.mode = 'no-cors';
+                }
+
+                return fetch(request, fetchOpts);
             })
             .then(response => addToCache(cacheKeys.fetch, request, response))
             .then(response => {
@@ -179,10 +198,13 @@ self.addEventListener('fetch', function(event) {
             })
             .catch(e => {
                 console.error(
-                    request.url,
-                    'Resource could not be retrieved neither from cache nor through the network.',
-                    resourceType,
-                    e
+                    request.url +
+                        ' (' +
+                        resourceType +
+                        ')' +
+                        ' Resource could not be retrieved neither from cache nor through the network. ' +
+                        ' Error: ' +
+                        String(e)
                 );
             })
     );
