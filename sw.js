@@ -113,34 +113,20 @@ function isFromMyOrigin(request) {
     return new URL(request.url).origin === self.location.origin;
 }
 
-function shouldHandleFetch(event) {
-    const request = event.request;
-    const url = new URL(request.url);
-    const criteria = {
-        isGETRequest: request.method === 'GET',
-        // isFromMyOrigin: url.origin === self.location.origin,
-    };
-
-    // Create a new array with just the keys from criteria that have
-    // failing (i.e. false) values.
-    const failingCriteria = Object.keys(criteria).filter(
-        criteriaKey => !criteria[criteriaKey]
-    );
-
-    // If that failing array has any length, one or more tests failed.
-    return !failingCriteria.length;
-}
-
 self.addEventListener('fetch', function(event) {
-    if (!shouldHandleFetch(event)) {
+    const request = event.request;
+
+    if (request.method !== 'GET') {
         console.log(
-            'Letting the following request to be handled by browser:',
-            event
+            'Letting the following (non-GET) request to be handled by browser:',
+            event.request
         );
+
         return;
     }
 
-    const request = event.request;
+    console.log(request.url, 'Fetch intercepted.');
+
     const acceptHeader = request.headers.get('Accept');
     let resourceType = 'static';
     if (acceptHeader.indexOf('text/html') !== -1) {
@@ -148,8 +134,6 @@ self.addEventListener('fetch', function(event) {
     } else if (acceptHeader.indexOf('image') !== -1) {
         resourceType = 'image';
     }
-
-    console.log(request.url, 'Fetch intercepted.');
 
     // Use a cache-first strategy.
     event.respondWith(
